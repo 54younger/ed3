@@ -90,9 +90,7 @@ def CreateNewImg(img, path, act):
         for i, j in enumerate(path):
             newImg[i, 0:j, :] = img[i, 0:j, :]
             newImg[i, j : width - 1, :] = img[i, j + 1 : width, :]
-            newImg[i, j, :] = (
-                img[i, j, :].astype(np.int32) + img[i, j + 1, :].astype(np.int32)
-            ) // 2
+          
         return newImg[:, :-1, :].astype(np.int32)
 
 

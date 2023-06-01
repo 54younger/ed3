@@ -1,95 +1,140 @@
 from PIL import Image
 import numpy as np
+import matplotlib.pyplot as plt
+from poprogress import simple_progress
+
+KERNEL = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+KERNEL_T = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
+#last_energy_min = []
 
 
-def fastConvolve(img, ker):
-    imgF = np.fft.rfft2(img)
-    kerF = np.fft.rfft2(ker, img.shape)
-    return np.fft.irfft2(imgF * kerF)
+def ChangeIntoGrey(RGBimg):
+    gray = np.dot(RGBimg[..., :3], [0.33, 0.33, 0.33])
+    return np.round(gray).astype(np.int32)
 
 
-def getEdge(greyImg):
-    sX = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
-    sY = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
-
-    edgeH = fastConvolve(greyImg, sX)
-    edgeV = fastConvolve(greyImg, sY)
-
-    return np.sqrt(np.square(edgeH) + np.square(edgeV))
-
-
-def findCostArr(edgeImg):
-    r, c = edgeImg.shape
-    cost = np.zeros(edgeImg.shape)
-    cost[r - 1, :] = edgeImg[r - 1, :]
-    print(type(cost), type(edgeImg))
-    for i in range(r - 2, -1, -1):
-        for j in range(c):
-            c1, c2 = max(j - 1, 0), min(c, j + 2)
-            cost[i][j] = edgeImg[i][j] + cost[i + 1, c1:c2].min()
-
-    return cost
+def pre_process(how):
+    img = Image.open("input.jpg")
+    img = np.array(img)
+    if how == "v":  # vertical
+        img = np.transpose(img, (1, 0, 2))
+    ImgData = np.asarray(img, dtype="int32")
+    global last_energy_min
+    last_energy_min = np.zeros(ImgData.shape[0], dtype=int)
+    return ImgData
 
 
-def findSeam(cost):
-    r, c = cost.shape
-
-    path = []
-    j = cost[0].argmin()  # 返回最小值的索引
-    path.append(j)
-
-    for i in range(r - 1):
-        c1, c2 = max(j - 1, 0), min(c, j + 2)
-        j = max(j - 1, 0) + cost[i + 1, c1:c2].argmin()
-        path.append(j)
-
-    return path
+def Convolve(img, kernel):
+    new_img = np.fft.rfft2(img)
+    Con_kernel = np.fft.rfft2(kernel, img.shape)
+    return np.fft.irfft2(new_img * Con_kernel)
 
 
-def removeSeam(img, path):
-    print(img.shape)
-    r, c, _ = img.shape
-    newImg = np.zeros((r, c, 3))
-    for i, j in enumerate(path):
-        newImg[i, 0:j, :] = img[i, 0:j, :]
-        newImg[i, j : c - 1, :] = img[i, j + 1 : c, :]
-    return newImg[:, :-1, :].astype(np.int32)
+def Get_Edge(GreyImg):
+    Xedge = Convolve(GreyImg, KERNEL)
+    Yedge = Convolve(GreyImg, KERNEL_T)
+    EdgeImg = np.sqrt(np.square(Xedge) + np.square(Yedge))
+    return EdgeImg
 
 
-def addSeam(img, path):
-    r, c, _ = img.shape
-    newImg = np.zeros((r, c + 1, 3))
-    for i, j in enumerate(path):
-        newImg[i, 0:j, :] = img[i, 0:j, :]
-        newImg[i, j + 1 : c + 1, :] = img[i, j:c, :]
-        newImg[i, j, :] = (
-            img[i, j, :].astype(np.int32) + img[i, j + 1, :].astype(np.int32)
-        ) // 2
-    return newImg.astype(np.int32)
+def Get_energy(EdgeImg):
+    height, width = EdgeImg.shape
+    energy = np.zeros(EdgeImg.shape)
+    energy[height - 1, :] = EdgeImg[height - 1, :]
+    #energy[height - 1, (last_energy_min[height - 1]-1):(last_energy_min[height - 1]+1)] = 10000000
+    for i in range(height - 2, -1, -1):
+        for j in range(width):
+            energy[i][j] = (
+                EdgeImg[i][j] + energy[i + 1, max(j - 1, 0) : min(width, j + 2)].min()
+            )
+            #if last_energy_min[i] - 1 <= j <= last_energy_min[i] + 1:
+                #energy[i][j] = 10000000
+
+    return energy
 
 
-def rgbToGrey(arr):
-    greyVal = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
-    return np.round(greyVal).astype(np.int32)
+def Get_seam(energy):
+    seam = []
+    global last_energy_min
+
+    height, width = energy.shape
+    index = energy[0].argmin()
+    #last_energy_min[0] = index
+    seam.append(index)
+
+    for i in range(height - 1):
+        index = (
+            max(index - 1, 0)
+            + energy[i + 1, max(index - 1, 0) : min(width, index + 2)].argmin()
+        )
+        #last_energy_min[i + 1] = index
+        seam.append(index)
+
+    return seam
 
 
-# 读取图像
-img = Image.open("input.jpg")
-img = np.array(img)
-dataColor = np.asarray(img, dtype="int32")
+def CreateNewImg(img, path, act, energy):
+    height, width, _ = img.shape
 
-# 输入要删除或增加的像素数
+    if act == 1:  # add
+        newImg = np.zeros((height, width + 1, 3))
+        newEnergy = np.hstack((energy, np.zeros((energy.shape[0], 1))))
+        for i, j in enumerate(path):
+            newImg[i, 0:j, :] = img[i, 0:j, :]
+            newImg[i, j + 1 : width + 1, :] = img[i, j:width, :]
+            newImg[i, j, :] = (
+                img[i, j, :].astype(np.int32) + img[i, min(j + 1,width-1), :].astype(np.int32)
+            ) // 2
+            newEnergy[i, 0:j] = energy[i, 0:j]
+            newEnergy[i, j + 1 : width + 1] = energy[i, j:width]
+            newEnergy[i, max(j-5,0):min(j+5,width+1)] = 10000000
+        return newImg.astype(np.int32) , newEnergy.astype(np.int32)
+    else:  # delete
+        newImg = np.zeros((height, width, 3))
+        for i, j in enumerate(path):
+            newImg[i, 0:j, :] = img[i, 0:j, :]
+            newImg[i, j : width - 1, :] = img[i, j + 1 : width, :]
+
+        return newImg[:, :-1, :].astype(np.int32)
+
+
+how = input("The direction process(h/v):")
+ImgData = pre_process(how)
+originalImg = ImgData.copy()
+act = int(input("Add(1) or Delete(0):"))
+
 n = int(input("Enter number of pixels to be removed: "))
+if act == 1:
+    GreyImg = ChangeIntoGrey(ImgData)
+    EdgeImg = Get_Edge(GreyImg)
+    energy = Get_energy(EdgeImg)
+    for i in simple_progress(range(n)):
+        seam = Get_seam(energy)
+        ImgData, energy = CreateNewImg(ImgData, seam, act, energy)
+else:
+    for i in simple_progress(range(n)):
+        GreyImg = ChangeIntoGrey(ImgData)
+        EdgeImg = Get_Edge(GreyImg)
+        energy = Get_energy(EdgeImg)
+        seam = Get_seam(energy)
+        ImgData = CreateNewImg(ImgData, seam, act, energy)
 
-# 将图像转换为灰度图像
+if how == "v":
+    ImgData = np.transpose(ImgData, (1, 0, 2))
+    originalImg = np.transpose(originalImg, (1, 0, 2))
 
+newImg = Image.fromarray(ImgData.astype(np.uint8))
 
-for i in range(n):
-    greyImg = rgbToGrey(dataColor)
-    edgeImg = getEdge(greyImg)
-    cost = findCostArr(edgeImg)
-    path = findSeam(cost)
-    dataColor = removeSeam(dataColor, path)
-
-# 保存图像
-Image.fromarray(dataColor.astype(np.uint8)).save("output.png")
+# 对比更改前后图像
+fig, axs = plt.subplots(1, 2)
+axs[0].imshow(originalImg)
+axs[0].set_title("Original Image")
+axs[1].imshow(newImg)
+axs[1].set_title("Modified Image")
+plt.show()
+# 储存图像
+if act == 1:
+    name = f"output-{how}ADD{n}pixels.png"
+else:
+    name = f"output-{how}Deleten{n}pixels.png"
+newImg.save(name)
