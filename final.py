@@ -5,6 +5,7 @@ from poprogress import simple_progress
 
 KERNEL = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
 KERNEL_T = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
+last_energy_min = []
 
 
 def ChangeIntoGrey(RGBimg):
@@ -18,6 +19,8 @@ def pre_process(how):
     if how == "v":  # vertical
         img = np.transpose(img, (1, 0, 2))
     ImgData = np.asarray(img, dtype="int32")
+    global last_energy_min
+    last_energy_min = np.zeros(ImgData.shape[0], dtype=int)
     return ImgData
 
 
@@ -38,20 +41,25 @@ def Get_energy(EdgeImg):
     height, width = EdgeImg.shape
     energy = np.zeros(EdgeImg.shape)
     energy[height - 1, :] = EdgeImg[height - 1, :]
+    energy[height - 1, (last_energy_min[height - 1]-1):(last_energy_min[height - 1]+1)] = 10000000
     for i in range(height - 2, -1, -1):
         for j in range(width):
-
             energy[i][j] = (
-                EdgeImg[i][j] + energy[i + 1, max(j - 1, 0):min(width, j + 2)].min()
+                EdgeImg[i][j] + energy[i + 1, max(j - 1, 0) : min(width, j + 2)].min()
             )
+            if last_energy_min[i] - 1 <= j <= last_energy_min[i] + 1:
+                energy[i][j] = 10000000
 
     return energy
 
 
 def Get_seam(energy):
     seam = []
+    global last_energy_min
+
     height, width = energy.shape
     index = energy[0].argmin()
+    last_energy_min[0] = index
     seam.append(index)
 
     for i in range(height - 1):
@@ -59,6 +67,7 @@ def Get_seam(energy):
             max(index - 1, 0)
             + energy[i + 1, max(index - 1, 0) : min(width, index + 2)].argmin()
         )
+        last_energy_min[i + 1] = index
         seam.append(index)
 
     return seam
@@ -103,7 +112,7 @@ for i in simple_progress(range(n)):
 
 if how == "v":
     ImgData = np.transpose(ImgData, (1, 0, 2))
-    originalImg=np.transpose(originalImg, (1, 0, 2))
+    originalImg = np.transpose(originalImg, (1, 0, 2))
 
 newImg = Image.fromarray(ImgData.astype(np.uint8))
 
@@ -114,9 +123,9 @@ axs[0].set_title("Original Image")
 axs[1].imshow(newImg)
 axs[1].set_title("Modified Image")
 plt.show()
-#储存图像
-if act==1:
-    name=f"output-{how}ADD{n}pixels.png"
+# 储存图像
+if act == 1:
+    name = f"output-{how}ADD{n}pixels.png"
 else:
-    name=f"output-{how}Deleten{n}pixels.png"
+    name = f"output-{how}Deleten{n}pixels.png"
 newImg.save(name)
